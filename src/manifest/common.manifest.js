@@ -75,8 +75,8 @@ module.exports = {
   action: {
     default_icon: {
       '16': 'assets/icon-16.png',
-      '24': 'assets/icon-24.png',
-      '32': 'assets/icon-32.png' // Manifest V3 recommends 32px for action icons
+      '19': 'assets/icon-19.png', // Common size
+      '38': 'assets/icon-38.png'  // Common size
     },
     default_title: '__MSG_extension_name__',
     default_popup: 'popup.html' // Assuming popup.html is in the root output

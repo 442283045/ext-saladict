@@ -3,8 +3,8 @@
     "service_worker": "background.js"
   },
   "options_ui": {
-    "chrome_style": false
-    // "open_in_tab": true // Consider if options page should open in a new tab
+    "page": "options.html",
+    "open_in_tab": true
   },
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'"

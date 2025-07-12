@@ -3,19 +3,29 @@
  */
 
 import { AppConfig } from '@/app-config'
-import { addConfigListener } from '@/_helpers/config-manager'
+import { getConfig, addConfigListener } from '@/_helpers/config-manager'
 import { openUrl } from '@/_helpers/browser-api'
 
-export function init(config: AppConfig) {
+// Store current config state for synchronous access within listeners
+let currentAppConfig: AppConfig | undefined
+
+async function updateCurrentConfig(config?: AppConfig) {
+  currentAppConfig = config || (await getConfig())
+}
+
+export async function init() {
+  await updateCurrentConfig()
+
   if (browser.webRequest.onBeforeRequest.hasListener(otherPdfListener)) {
     return
   }
 
-  if (config.pdfSniff) {
+  if (currentAppConfig && currentAppConfig.pdfSniff) {
     startListening()
   }
 
-  addConfigListener(({ newConfig, oldConfig }) => {
+  addConfigListener(async ({ newConfig, oldConfig }) => {
+    await updateCurrentConfig(newConfig)
     if (newConfig) {
       if (!oldConfig || newConfig.pdfSniff !== oldConfig.pdfSniff) {
         if (newConfig.pdfSniff) {
@@ -33,6 +43,12 @@ export function init(config: AppConfig) {
  * @param force load the current tab anyway
  */
 export async function openPDF(url?: string, force?: boolean) {
+  if (!currentAppConfig) {
+    await updateCurrentConfig()
+  }
+  // Should always have config after init, but as a fallback:
+  const configToUse = currentAppConfig || (await getConfig())
+
   let pdfURL = browser.runtime.getURL('assets/pdf/web/viewer.html')
 
   if (url) {
@@ -42,7 +58,7 @@ export async function openPDF(url?: string, force?: boolean) {
     if (tabs.length > 0 && tabs[0].url) {
       const curURL = tabs[0].url
       if (curURL.startsWith(pdfURL)) {
-        if (window.appConfig.pdfStandalone) {
+        if (configToUse.pdfStandalone) {
           if (tabs[0].id != null) {
             await browser.tabs.remove(tabs[0].id)
           }
@@ -56,7 +72,7 @@ export async function openPDF(url?: string, force?: boolean) {
     }
   }
 
-  return window.appConfig.pdfStandalone
+  return configToUse.pdfStandalone
     ? openPDFStandalone(pdfURL)
     : openUrl({ url: pdfURL, unique: false })
 }
@@ -110,9 +126,16 @@ function otherPdfListener({
   Parameters<typeof browser.webRequest.onBeforeRequest.removeListener>[0]
 >[0]) {
   const matchURL = ([r]: ReadonlyArray<string>) => new RegExp(r).test(url)
+  // Use currentAppConfig, ensure it's loaded. Fallback if absolutely necessary, though init should prevent this.
+  const config = currentAppConfig
+  if (!config) {
+    console.warn('pdf-sniffer: appConfig not available in otherPdfListener')
+    return
+  }
+
   if (
-    window.appConfig.pdfBlacklist.some(matchURL) &&
-    !window.appConfig.pdfWhitelist.some(matchURL)
+    config.pdfBlacklist.some(matchURL) &&
+    !config.pdfWhitelist.some(matchURL)
   ) {
     return
   }
@@ -121,7 +144,7 @@ function otherPdfListener({
     `assets/pdf/web/viewer.html?file=${encodeURIComponent(url)}`
   )
 
-  if (tabId !== -1 && window.appConfig.pdfStandalone === 'always') {
+  if (tabId !== -1 && config.pdfStandalone === 'always') {
     browser.tabs.remove(tabId)
     openPDFStandalone(redirectUrl)
     return { cancel: true }
@@ -141,9 +164,16 @@ function httpPdfListener({
     return
   }
   const matchURL = ([r]: ReadonlyArray<string>) => new RegExp(r).test(url)
+  // Use currentAppConfig, ensure it's loaded. Fallback if absolutely necessary, though init should prevent this.
+  const config = currentAppConfig
+  if (!config) {
+    console.warn('pdf-sniffer: appConfig not available in httpPdfListener')
+    return
+  }
+
   if (
-    window.appConfig.pdfBlacklist.some(matchURL) &&
-    !window.appConfig.pdfWhitelist.some(matchURL)
+    config.pdfBlacklist.some(matchURL) &&
+    !config.pdfWhitelist.some(matchURL)
   ) {
     return
   }
@@ -161,7 +191,7 @@ function httpPdfListener({
         `assets/pdf/web/viewer.html?file=${encodeURIComponent(url)}`
       )
 
-      if (tabId !== -1 && window.appConfig.pdfStandalone === 'always') {
+      if (tabId !== -1 && config.pdfStandalone === 'always') {
         browser.tabs.remove(tabId)
         openPDFStandalone(redirectUrl)
         return { cancel: true }

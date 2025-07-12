@@ -1,15 +1,17 @@
 {
   "background": {
-    "persistent": true
+    "service_worker": "background.js"
   },
   "options_ui": {
     "chrome_style": false
+    // "open_in_tab": true // Consider if options page should open in a new tab
   },
-  "optional_permissions": [
-    "background"
-  ],
-  "content_security_policy": "script-src 'self' chrome-extension://hfjbmagddngcpeloejdejnfgbamkjaeg/ chrome-extension://aibcglbfblnogfjhbcmmpobjhnomhcdo/; object-src 'self'",
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+    // If sandboxed pages are used, they would need their own CSP:
+    // "sandbox": "sandbox allow-scripts allow-forms allow-popups allow-modals; script-src 'self' 'unsafe-inline' 'unsafe-eval'; child-src 'self';"
+  },
   "incognito": "split",
-  "update_url": "https://clients2.google.com/service/update2/crx",
-  "minimum_chrome_version": "63"
+  "update_url": "https://clients2.google.com/service/update2/crx"
+  // minimum_chrome_version is generally not needed with manifest_version 3
 }

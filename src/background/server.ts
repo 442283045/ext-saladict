@@ -168,17 +168,167 @@ export class BackgroundServer {
     }
   }
 
+import { getConfig } from '@/_helpers/config-manager'
+import { getActiveProfile } from '@/_helpers/profile-manager'
+
+/**
+ * background script as transfer station
+ */
+export class BackgroundServer {
+  private static instance: BackgroundServer
+
+  static getInstance() {
+    return (
+      BackgroundServer.instance ||
+      (BackgroundServer.instance = new BackgroundServer())
+    )
+  }
+
+  static init = BackgroundServer.getInstance
+
+  static getDictEngine<P = {}>(
+    id: DictID
+  ): Promise<{
+    search: SearchFunction<DictSearchResult<any>, P>
+    getSrcPage: GetSrcPageFunction
+  }> {
+    return import(
+      /* webpackInclude: /engine\.ts$/ */
+      /* webpackMode: "lazy" */
+      `@/components/dictionaries/${id}/engine.ts`
+    )
+  }
+
+  private qsPanelManager: QsPanelManager
+
+  // singleton
+  private constructor() {
+    this.qsPanelManager = new QsPanelManager()
+
+    message.addListener((msg, sender: browser.runtime.MessageSender) => {
+      switch (msg.type) {
+        case 'OPEN_DICT_SRC_PAGE':
+          return this.openSrcPage(msg.payload)
+        case 'OPEN_URL':
+          return openUrl(msg.payload)
+        case 'PLAY_AUDIO':
+          return AudioManager.getInstance().play(msg.payload)
+        case 'STOP_AUDIO':
+          AudioManager.getInstance().reset()
+          return
+        case 'FETCH_DICT_RESULT':
+          return this.fetchDictResult(msg.payload)
+        case 'DICT_ENGINE_METHOD':
+          return this.callDictEngineMethod(msg.payload)
+        case 'GET_CLIPBOARD':
+          return getTextFromClipboard()
+        case 'SET_CLIPBOARD':
+          return Promise.resolve(copyTextToClipboard(msg.payload))
+
+        case 'INJECT_DICTPANEL':
+          return injectDictPanel(sender.tab)
+
+        case 'QUERY_QS_PANEL':
+          return this.qsPanelManager.hasCreated()
+        case 'OPEN_QS_PANEL':
+          return this.openQSPanel()
+        case 'CLOSE_QS_PANEL':
+          AudioManager.getInstance().reset()
+          return this.qsPanelManager.destroy()
+        case 'QS_SWITCH_SIDEBAR':
+          return this.qsPanelManager.toggleSidebar(msg.payload)
+
+        case 'IS_IN_NOTEBOOK':
+          return isInNotebook(msg.payload)
+        case 'SAVE_WORD':
+          return saveWord(msg.payload).then(response => {
+            this.notifyWordSaved()
+            return response
+          })
+        case 'DELETE_WORDS':
+          return deleteWords(msg.payload).then(response => {
+            this.notifyWordSaved()
+            return response
+          })
+        case 'GET_WORDS_BY_TEXT':
+          return getWordsByText(msg.payload)
+        case 'GET_WORDS':
+          return getWords(msg.payload)
+        case 'GET_SUGGESTS':
+          return getSuggests(msg.payload)
+        case 'YOUDAO_TRANSLATE_AJAX':
+          return this.youdaoTranslateAjax(msg.payload)
+      }
+    })
+
+    browser.runtime.onConnect.addListener(port => {
+      if (port.name === 'popup') {
+        // This is a workaround for browser action page
+        // which does not fire beforeunload event
+        port.onDisconnect.addListener(() => {
+          AudioManager.getInstance().reset()
+        })
+      }
+    })
+  }
+
+  async openQSPanel(): Promise<void> {
+    if (await this.qsPanelManager.hasCreated()) {
+      await this.qsPanelManager.focus()
+      return
+    }
+    await this.qsPanelManager.create()
+  }
+
+  async searchClipboard(): Promise<void> {
+    const word = newWord({ text: await getTextFromClipboard() })
+
+    if (await this.qsPanelManager.hasCreated()) {
+      await message.send({
+        type: 'QS_PANEL_SEARCH_TEXT',
+        payload: word
+      })
+      return
+    }
+
+    await this.qsPanelManager.create(word)
+  }
+
+  async searchPageSelection(): Promise<void> {
+    const tabs = await browser.tabs.query({
+      active: true,
+      lastFocusedWindow: true
+    })
+
+    let word: Word | undefined
+
+    if (tabs.length > 0 && tabs[0].id != null) {
+      word = await message.send<'PRELOAD_SELECTION'>(tabs[0].id, {
+        type: 'PRELOAD_SELECTION'
+      })
+    }
+
+    const hasCreated = await this.qsPanelManager.hasCreated()
+
+    if (hasCreated) {
+      await this.qsPanelManager.focus()
+    } else {
+      await this.qsPanelManager.create(word)
+    }
+  }
+
   async openSrcPage({
     id,
     text,
     active
   }: Message<'OPEN_DICT_SRC_PAGE'>['payload']): Promise<void> {
     const engine = await BackgroundServer.getDictEngine(id)
+    const [appConfig, activeProfile] = await Promise.all([getConfig(), getActiveProfile()])
     return openUrl({
       url: await engine.getSrcPage(
         text,
-        window.appConfig,
-        window.activeProfile
+        appConfig,
+        activeProfile
       ),
       active
     })
@@ -188,6 +338,7 @@ export class BackgroundServer {
     data: Message<'FETCH_DICT_RESULT'>['payload']
   ): Promise<MessageResponse<'FETCH_DICT_RESULT'>> {
     const payload = data.payload || {}
+    const [appConfig, activeProfile] = await Promise.all([getConfig(), getActiveProfile()])
 
     let response: DictSearchResult<any> | undefined
 
@@ -198,7 +349,7 @@ export class BackgroundServer {
 
       try {
         response = await timeout(
-          search(data.text, window.appConfig, window.activeProfile, payload),
+          search(data.text, appConfig, activeProfile, payload),
           25000
         )
       } catch (e) {
@@ -206,7 +357,7 @@ export class BackgroundServer {
           // retry once
           await timer(500)
           response = await timeout(
-            search(data.text, window.appConfig, window.activeProfile, payload),
+            search(data.text, appConfig, activeProfile, payload),
             25000
           )
         } else {

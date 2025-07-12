@@ -1,7 +1,7 @@
 import { message, openUrl } from '@/_helpers/browser-api'
 import { AppConfig } from '@/app-config'
 import isEqual from 'lodash/isEqual'
-import { createConfigStream } from '@/_helpers/config-manager'
+import { createConfigStream, getConfig } from '@/_helpers/config-manager'
 import { isFirefox } from '@/_helpers/saladict'
 import { reportEvent } from '@/_helpers/analytics'
 import './types'
@@ -93,13 +93,14 @@ export class ContextMenus {
     }
   }
 
-  static openBaiduPage() {
+  static async openBaiduPage() {
+    const appConfig = await getConfig()
     browser.tabs.query({ active: true, currentWindow: true }).then(tabs => {
       if (tabs.length > 0 && tabs[0].url) {
         const langCode =
-          window.appConfig.langCode === 'zh-CN'
+          appConfig.langCode === 'zh-CN'
             ? 'zh'
-            : window.appConfig.langCode === 'zh-TW'
+            : appConfig.langCode === 'zh-TW'
             ? 'cht'
             : 'en'
         openUrl(
@@ -111,10 +112,11 @@ export class ContextMenus {
     })
   }
 
-  static openSogouPage() {
+  static async openSogouPage() {
+    const appConfig = await getConfig()
     browser.tabs.query({ active: true, currentWindow: true }).then(tabs => {
       if (tabs.length > 0 && tabs[0].url) {
-        const langCode = window.appConfig.langCode === 'zh-CN' ? 'zh-CHS' : 'en'
+        const langCode = appConfig.langCode === 'zh-CN' ? 'zh-CHS' : 'en'
         openUrl(
           `https://translate.sogoucdn.com/pcvtsnapshot?from=auto&to=${langCode}&tfr=translatepc&url=${encodeURIComponent(
             tabs[0].url as string
@@ -124,13 +126,14 @@ export class ContextMenus {
     })
   }
 
-  static openMicrosoftPage() {
+  static async openMicrosoftPage() {
+    const appConfig = await getConfig()
     browser.tabs.query({ active: true, currentWindow: true }).then(tabs => {
       if (tabs.length > 0 && tabs[0].url) {
         const langCode =
-          window.appConfig.langCode === 'zh-CN'
+          appConfig.langCode === 'zh-CN'
             ? 'zh-Hans'
-            : window.appConfig.langCode === 'zh-TW'
+            : appConfig.langCode === 'zh-TW'
             ? 'zh-Hant'
             : 'en'
         openUrl(
@@ -199,16 +202,20 @@ export class ContextMenus {
         openUrl(browser.runtime.getURL('notebook.html'))
         break
       default:
-        {
-          const item = window.appConfig.contextMenus.all[menuItemId]
-          if (item) {
-            const url = typeof item === 'string' ? item : item.url
-            if (url) {
-              openUrl(url.replace('%s', encodeURIComponent(selectionText)))
-            }
-          }
-        }
+        // This part needs to be async now due to getConfig()
+        this.handleDynamicContextMenu(menuItemId, selectionText)
         break
+    }
+  }
+
+  private async handleDynamicContextMenu(menuItemId: string, selectionText: string) {
+    const appConfig = await getConfig()
+    const item = appConfig.contextMenus.all[menuItemId]
+    if (item) {
+      const url = typeof item === 'string' ? item : item.url
+      if (url) {
+        openUrl(url.replace('%s', encodeURIComponent(selectionText)))
+      }
     }
   }
 
@@ -396,11 +403,39 @@ export class ContextMenus {
 }
 
 async function tryExecuteScript(
-  details: browser.extensionTypes.InjectDetails,
+  // details: browser.extensionTypes.InjectDetails, // Old type
+  details: { file: string; tabId?: number }, // Simplified for current usage, expand if needed
   nameKey: string
 ) {
   try {
-    return await browser.tabs.executeScript(details)
+    // Manifest V3 requires tabId. If not provided, it usually implies current tab.
+    // However, chrome.scripting.executeScript needs it explicitly in the target.
+    // We need to query for the active tab if tabId is not given.
+    let tabId = details.tabId
+    if (!tabId) {
+      const [activeTab] = await browser.tabs.query({ active: true, currentWindow: true })
+      if (activeTab && activeTab.id) {
+        tabId = activeTab.id
+      } else {
+        throw new Error('No active tab found for executeScript')
+      }
+    }
+
+    // browser.tabs.executeScript(details) old call
+    // New call:
+    const results = await chrome.scripting.executeScript({
+      target: { tabId: tabId },
+      files: [details.file]
+    })
+    // scripting.executeScript returns an array of InjectionResult objects.
+    // The old executeScript might have returned other values based on the script's last expression.
+    // For compatibility, we might need to inspect results[0].result if the calling code expects a specific return.
+    // The current usage (e.g. in openYoudao) checks `if (!result || ((result as any) !== 1 && result[0] !== 1))`.
+    // This suggests it expects the script's result.
+    if (results && results.length > 0) {
+      return results.map(r => r.result) // Return an array of results, or just results[0].result if single frame
+    }
+    return [] // Or handle as an error/empty case
   } catch (error) {
     const { i18n } = await I18nManager.getInstance()
     await browser.notifications.create({

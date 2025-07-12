@@ -1,10 +1,11 @@
 import './env'
 import './initialization'
-import { getConfig, addConfigListener } from '@/_helpers/config-manager'
-import {
-  createActiveProfileStream,
-  createProfileIDListStream
-} from '@/_helpers/profile-manager'
+// Import getters directly if needed by other modules, but background itself shouldn't cache them globally.
+// import { getConfig, addConfigListener } from '@/_helpers/config-manager'
+// import {
+//   createActiveProfileStream,
+//   createProfileIDListStream
+// } from '@/_helpers/profile-manager'
 import { message } from '@/_helpers/browser-api'
 import { startSyncServiceInterval } from './sync-manager'
 import { init as initPdf } from './pdf-sniffer'
@@ -20,27 +21,22 @@ message.self.initServer()
 
 startSyncServiceInterval()
 
-ContextMenus.init()
-BackgroundServer.init()
+ContextMenus.init() // Registers context menu listeners
+BackgroundServer.init() // Registers message listeners
 
 setupCaiyunTrsBackend()
-
 setupRequestGAListener()
 
-getConfig().then(async config => {
-  window.appConfig = config
-  initPdf(config)
-  initBadge()
+// Initialize modules that might need config.
+// They will fetch the config themselves using getConfig() or listen to changes.
+initPdf()
+initBadge()
 
-  addConfigListener(({ newConfig }) => {
-    window.appConfig = newConfig
-  })
-})
+// No longer caching config, activeProfile, or profileIDList on a global `window` object.
+// Modules that need these values should:
+// 1. Call `getConfig()` from `@/_helpers/config-manager`
+// 2. Call `getActiveProfile()` or `getProfileIDList()` from `@/_helpers/profile-manager`
+// 3. Use `addConfigListener`, `createActiveProfileStream`, or `createProfileIDListStream`
+//    to react to changes if necessary, directly within those modules.
 
-createActiveProfileStream().subscribe(profile => {
-  window.activeProfile = profile
-})
-
-createProfileIDListStream().subscribe(list => {
-  window.profileIDList = list
-})
+console.log('Saladict Manifest V3 Service Worker Activated')

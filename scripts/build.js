@@ -140,7 +140,8 @@ function build (previousFileSizes) {
 function generateByBrowser () {
   console.log('\nGenerating files for each browser...\n')
 
-  const commonManifest = require('../src/manifest/common.manifest.json')
+  // Correctly require the common.manifest.js file
+  const commonManifest = require('../src/manifest/common.manifest.js')
   const version = { version: require('../package.json').version }
   const files = fs.readdirSync(paths.appBuild)
     .map(name => ({name, path: path.join(paths.appBuild, name)}))

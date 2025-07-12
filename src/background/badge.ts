@@ -1,7 +1,8 @@
 import { message } from '@/_helpers/browser-api'
-import { Subject } from 'rxjs'
+import { Subject, combineLatest } from 'rxjs'
 import { switchMapBy } from '@/_helpers/observables'
 import { timer } from '@/_helpers/promise-more'
+import { getConfig, createConfigStream, AppConfig } from '@/_helpers/config-manager'
 
 interface UpdateBadgeOptions {
   active: boolean
@@ -15,16 +16,29 @@ const onUpdated$ = new Subject<{
   options?: UpdateBadgeOptions
 }>()
 
+// Cache the latest config for synchronous access in title setters
+let currentAppConfig: AppConfig | undefined
+
+createConfigStream().subscribe(config => {
+  currentAppConfig = config
+  // Potentially re-render all visible badges if langCode or active status changed globally
+  // This could be done by querying all tabs and re-triggering onUpdated$ for them,
+  // or more simply, let them update upon next natural event (tab update, etc.)
+  // For now, we'll rely on natural updates or specific calls to update badges.
+})
+
 onUpdated$
   .pipe(
     switchMapBy('tabId', async o => {
       if (o.options) {
-        return o as Required<typeof o>
+        return { ...o, options: o.options } as Required<typeof o>
       }
 
       if (o.delay) {
         await timer(1000)
       }
+
+      const config = currentAppConfig || await getConfig() // ensure config is available
 
       return {
         tabId: o.tabId,
@@ -33,7 +47,7 @@ onUpdated$
             type: 'GET_TAB_BADGE_INFO'
           })
           .catch(() => {})) || {
-          active: window.appConfig.active,
+          active: config.active, // Use fetched/current config
           tempDisable: false,
           unsupported: true
         }
@@ -56,7 +70,9 @@ onUpdated$
     return setDefault(tabId)
   })
 
-export function initBadge() {
+export async function initBadge() {
+  currentAppConfig = await getConfig() // Initial fetch
+
   /** Sent when content script loaded */
   message.addListener('SEND_TAB_BADGE_INFO', ({ payload }, sender) => {
     if (sender.tab && sender.tab.id) {
@@ -69,14 +85,17 @@ export function initBadge() {
       onUpdated$.next({ tabId, delay: true })
     }
   })
+
+  // Listen for global config changes that affect all badges (like app active state or lang code)
+  // This is implicitly handled by `createConfigStream().subscribe` above, which updates currentAppConfig.
+  // If a more immediate update of all badges is needed upon such a change, that logic would go into the subscription.
 }
 
 function setOff(tabId: number) {
   setIcon(true, tabId)
-  // browser.browserAction.setBadgeBackgroundColor({ color: '#E74C3C', tabId })
-  // browser.browserAction.setBadgeText({ text: 'off', tabId })
-  browser.browserAction.setTitle({
-    title: require('@/_locales/' + window.appConfig.langCode + '/background')
+  const langCode = currentAppConfig ? currentAppConfig.langCode : 'en' // Fallback lang
+  chrome.action.setTitle({ // Updated API
+    title: require(`@/_locales/${langCode}/background`)
       .locale.app.off,
     tabId
   })
@@ -84,10 +103,9 @@ function setOff(tabId: number) {
 
 function setTempOff(tabId: number) {
   setIcon(true, tabId)
-  // browser.browserAction.setBadgeBackgroundColor({ color: '#F39C12', tabId })
-  // browser.browserAction.setBadgeText({ text: 'off', tabId })
-  browser.browserAction.setTitle({
-    title: require('@/_locales/' + window.appConfig.langCode + '/background')
+  const langCode = currentAppConfig ? currentAppConfig.langCode : 'en'
+  chrome.action.setTitle({ // Updated API
+    title: require(`@/_locales/${langCode}/background`)
       .locale.app.tempOff,
     tabId
   })
@@ -95,8 +113,9 @@ function setTempOff(tabId: number) {
 
 function setUnsupported(tabId: number) {
   setIcon(true, tabId)
-  browser.browserAction.setTitle({
-    title: require('@/_locales/' + window.appConfig.langCode + '/background')
+  const langCode = currentAppConfig ? currentAppConfig.langCode : 'en'
+  chrome.action.setTitle({ // Updated API
+    title: require(`@/_locales/${langCode}/background`)
       .locale.app.unsupported,
     tabId
   })
@@ -104,12 +123,12 @@ function setUnsupported(tabId: number) {
 
 function setDefault(tabId: number) {
   setIcon(false, tabId)
-  // browser.browserAction.setBadgeText({ text: '', tabId })
-  // browser.browserAction.setTitle({ title: '', tabId })
+  // chrome.action.setBadgeText({ text: '', tabId }); // If badges are used
+  chrome.action.setTitle({ title: '', tabId }) // Updated API
 }
 
 function setIcon(gray: boolean, tabId: number) {
-  browser.browserAction.setIcon({
+  chrome.action.setIcon({ // Updated API
     tabId,
     path: gray
       ? {
